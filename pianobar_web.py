@@ -12,6 +12,7 @@ proc = None
 stations = {}
 music_playing = True
 current_station = ""
+default_station = 0
 first_login = True
 need_to_refresh_stations = True
 caffeine = None
@@ -24,6 +25,11 @@ necessary_votes = 1
 voting_interval = 30 # seconds
 station_changer = None
 admin_ip = ""
+pianobar_config_path = '{}/.config/pianobar'.format(os.environ['HOME'])
+station_config_path = '{}/station_list'.format(pianobar_config_path)
+
+if not os.path.exists(pianobar_config_path):
+    os.makedirs(pianobar_config_path)
 
 email = ""
 password = ""
@@ -59,7 +65,17 @@ def login_error(error):
 def serve_static(filename):
     return static_file(filename, root="./static")
 
+@get('/start/:station')
+def start(station=0):
+    global default_station
+    print station
+    print default_station
+    default_station = int(station)
+    print default_station
+    authenticate()
+
 # authenticates credentials with pandora
+@get('/auth')
 @post('/auth')
 def authenticate():
     global proc, email, password, admin_ip
@@ -67,15 +83,18 @@ def authenticate():
     proc = subprocess.Popen("pianobar", stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if proc is None:
         print "Something went wrong. Proc is none"
+    else:
+        print "Started pianobar proc"
 
-    local_email = request.forms.get("email")
-    local_password = request.forms.get("password")
+    local_email = os.environ['PANDORA_EMAIL'] #request.forms.get("email")
+    local_password = os.environ['PANDORA_PASS'] #request.forms.get("password")
     
     # Enter email and password when prompted
     proc.stdin.write(local_email + "\n")
     proc.stdin.write(local_password + "\n")
 
     auth = [proc.stdout.readline() for i in range(0, 4)][-1]
+    print auth
 
     proc.stdout.readline() # dicard the line '(i) Get stations..'
 
@@ -115,7 +134,7 @@ def verify():
 # home route
 @get('/home')
 def home():
-    global proc, stations, music_playing, current_station, first_login, need_to_refresh_stations, artist, track, album, caffeine, can_read_proc, email, station_changer, admin_ip
+    global proc, stations, music_playing, default_station, current_station, first_login, need_to_refresh_stations, artist, track, album, caffeine, can_read_proc, email, station_changer, admin_ip
 
     if caffeine is None:
         caffeine = Thread(target=stay_alive)
@@ -135,9 +154,19 @@ def home():
             stations[email] == refreshed_stations
         except KeyError, e:
             stations[email] = refreshed_stations
-        current_station = stations[email][0].name
+        with open(station_config_path, 'w') as output:
+    
+            print '--- Station List ---'
+            for station in stations[email]:
+                formatted_line = '{}|{}'.format(station.identifier, station.name)
+                print formatted_line
+                output.write(formatted_line + "\n")
+            print '--------------------'
+
+        print 'Default Station: {}'.format(stations[email][default_station])
+        current_station = stations[email][default_station].name
         if not len(stations[email]) == 0:
-            proc.stdin.write("0\n")
+            proc.stdin.write("{}\n".format(default_station))
         need_to_refresh_stations = False
 
     first_login = False
@@ -395,6 +424,9 @@ class Station:
     def __init__(self, station_string):
         self.parse(station_string)
 
+    def __str__(self):
+        return '{} {}'.format(self.identifier, self.name)
+
     # not very clever (God awful) use of not regexes
     def parse(self, station_string):
         cleaned = station_string[4:-1]
@@ -411,5 +443,5 @@ class Station:
                 return
         self.name = " ".join(self.name)
 
-
 run(host="0.0.0.0", port=8080, debug=True)
+
